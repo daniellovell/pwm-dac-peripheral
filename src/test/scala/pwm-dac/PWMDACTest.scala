@@ -8,8 +8,6 @@ import chiseltest.experimental.TestOptionBuilder._
 import chiseltest.internal.{TreadleBackendAnnotation, VerilatorBackendAnnotation, WriteVcdAnnotation}
 import org.scalatest.flatspec.AnyFlatSpec
 
-import verif._
-
 class PWMDACTest extends AnyFlatSpec with ChiselScalatestTester {
   val tests = 40
 
@@ -37,7 +35,7 @@ class PWMDACTest extends AnyFlatSpec with ChiselScalatestTester {
     (out, lengths)
   }
 
-  it should "Form proper DMA requests" in {
+  it should "Output the correct PWM signal" in {
     val addrBits = 32
     val beatBytes = 4
     test(new PWMDACDMAAddresser(addrBits, beatBytes)).withAnnotations(Seq(TreadleBackendAnnotation, WriteVcdAnnotation)) { c =>
@@ -93,7 +91,7 @@ class PWMDACTest extends AnyFlatSpec with ChiselScalatestTester {
     }
   }
 
-  it should "Pass a full PWMDAC loop without whitening" in {
+  it should "Output the correct modeled output voltage" in {
     val params = PWMDACParams()
     val beatBytes = 4
     test(new PWMDACLoopback(params, beatBytes)).withAnnotations(Seq(TreadleBackendAnnotation, WriteVcdAnnotation)) { c =>

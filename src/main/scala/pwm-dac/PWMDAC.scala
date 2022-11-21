@@ -9,15 +9,6 @@ import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 import freechips.rocketchip.regmapper.{HasRegMap, RegField, RegisterWriteIO}
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLRegBundle, TLRegModule, TLRegisterRouter}
 
-class PWMDACConstants extends Bundle {
-  val radioMode = UInt(1.W)
-  val bleChannelIndex = UInt(6.W)
-  val lrwpanChannelIndex = UInt(6.W)
-  val crcSeed = UInt(24.W)
-  val accessAddress = UInt(32.W)
-  val shr = UInt(16.W)
-}
-
 case class PWMDACParams (
   address: BigInt = 0x8000,
 )
@@ -25,8 +16,7 @@ case class PWMDACParams (
 case object PWMDACKey extends Field[Option[PWMDACParams]](None)
 
 class PWMDACAnalogIO(params: PWMDACParams) extends Bundle {
-  val data = new modem.ModemAnalogIO(params)
-  val tuning = new modem.ModemTuningIO
+  val dac_out = new Bool()
 }
 
 class PWMDACStatus extends Bundle {
@@ -56,7 +46,7 @@ trait PWMDACFrontendModule extends HasRegMap {
   interrupts(0) := io.back.interrupt.rxError
 
   regmap(
-    0x00 -> Seq(RegField.w(32, inst)),                  // Command start
+    0x00 -> Seq(RegField.w(32, inst)),         // Command start
     0x04 -> Seq(RegField.w(32, additionalData)),
     0x08 -> Seq(RegField.r(32, io.back.status.status0)), // Status start
     0x0C -> Seq(RegField.r(32, io.back.status.status1)),
@@ -73,15 +63,13 @@ class PWMDACFrontend(params: PWMDACParams)(implicit p: Parameters)
       new TLRegModule(params, _, _) with PWMDACFrontendModule)
 
 class PWMDAC(params: PWMDACParams, beatBytes: Int)(implicit p: Parameters) extends LazyModule {
-  val dma = LazyModule(new EE290CDMA(beatBytes, params.maxReadSize, "baseband"))
 
   val mmio = TLIdentityNode()
-  val mem = dma.id_node
 
-  val basebandFrontend = LazyModule(new PWMDACFrontend(params, beatBytes))
-  val intnode = basebandFrontend.intnode
+  val pwmdacFrontend = LazyModule(new PWMDACFrontend(params, beatBytes))
+  val intnode = pwmdacFrontend.intnode
 
-  basebandFrontend.node := mmio
+  pwmdacFrontend.node := mmio
 
   lazy val module = new PWMDACImp(params, beatBytes,this)
 }
@@ -89,16 +77,16 @@ class PWMDAC(params: PWMDACParams, beatBytes: Int)(implicit p: Parameters) exten
 class PWMDACImp(params: PWMDACParams, beatBytes: Int, outer: PWMDAC)(implicit p: Parameters) extends LazyModuleImp(outer) {
   val io = dontTouch(IO(new PWMDACAnalogIO(params)))
 
-  val basebandFrontend = outer.basebandFrontend.module
+  val pwmdacFrontend = outer.pwmdacFrontend.module
   val dma = outer.dma.module
 
   // Interrupt Message Store
   val messageStore = Module(new MessageStore(params))
   messageStore.io.in <> bmc.io.messages
-  basebandFrontend.io.back.messages <> messageStore.io.out
+  pwmdacFrontend.io.back.messages <> messageStore.io.out
 
   // Interrupts
-  basebandFrontend.io.back.interrupt.rxError  := bmc.io.interrupt.rxError
+  pwmdacFrontend.io.back.interrupt.rxError  := bmc.io.interrupt.rxError
   // LO/32 Counter
   val lo_counter = withNewClock(io.tuning.trim.g1(0).asClock) {
     val ctr = Reg(UInt(32.W))
@@ -107,7 +95,7 @@ class PWMDACImp(params: PWMDACParams, beatBytes: Int, outer: PWMDAC)(implicit p:
   }
 
   // Status
-  basebandFrontend.io.back.status.status0 := Cat(bmc.io.state.assemblerState,
+  pwmdacFrontend.io.back.status.status0 := Cat(bmc.io.state.assemblerState,
                                                  bmc.io.state.disassemblerState,
                                                  bmc.io.state.txState,
                                                  bmc.io.state.rxControllerState,
@@ -116,17 +104,4 @@ class PWMDACImp(params: PWMDACParams, beatBytes: Int, outer: PWMDAC)(implicit p:
                                                  io.data.rx.i.data,
                                                  io.data.rx.q.data)
 
-  // Other off chip / analog IO
-  io.tuning.trim <> basebandFrontend.io.tuning.trim
-  io.tuning.i.bpf := basebandFrontend.io.tuning.i.bpf
-  io.tuning.q.bpf := basebandFrontend.io.tuning.q.bpf
-
-  io.data.tx.vco.cap_mod := bmc.io.analog.data.tx.vco.cap_mod
-  io.data.tx.vco.cap_medium := bmc.io.analog.data.tx.vco.cap_medium
-  io.data.tx.vco.cap_coarse := bmc.io.analog.data.tx.vco.cap_coarse
-  io.data.tx.vco.freq_reset := bmc.io.analog.data.tx.vco.freq_reset
-
-  io.offChipMode := bmc.io.analog.offChipMode
-  io.offChipDebug.rx := DontCare
-  io.offChipDebug.tx := DontCare
 }

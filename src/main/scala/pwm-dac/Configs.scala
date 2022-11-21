@@ -9,6 +9,7 @@ import freechips.rocketchip.config.Config
 import freechips.rocketchip.diplomacy.{InModuleBody, LazyModule}
 import freechips.rocketchip.subsystem.BaseSubsystem
 
+// Top-level trait to hook up the module to our SoC
 trait CanHavePeripheryPWMDAC { this: BaseSubsystem =>
 
   val dac_clock = p(PWMDACKey).map {_ =>
