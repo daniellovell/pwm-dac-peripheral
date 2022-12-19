@@ -9,79 +9,45 @@ import freechips.rocketchip.config.Config
 import freechips.rocketchip.diplomacy.{InModuleBody, LazyModule}
 import freechips.rocketchip.subsystem.BaseSubsystem
 
-// Top-level trait to hook up the module to our SoC
 trait CanHavePeripheryPWMDAC { this: BaseSubsystem =>
+  private val portName = "pwm_dac"
 
-  val dac_clock = p(PWMDACKey).map {_ =>
-    val dac_clock_io = InModuleBody {
-      val dac_clock_io = IO(Input(Clock())).suggestName("dac_clock")
-      dac_clock_io
+  // Only build if we are using the TL (nonAXI4) version
+  val pwm_dac = p(PWMDACKey) match {
+    case Some(params) => {
+      if (params.useAXI4) {
+        val pwm_dac = LazyModule(new PWMDACAXI4(params, pbus.beatBytes)(p))
+        pbus.toSlave(Some(portName)) {
+          pwm_dac.node :=
+          AXI4Buffer () :=
+          TLToAXI4 () :=
+          // toVariableWidthSlave doesn't use holdFirstDeny, which TLToAXI4() needsx
+          TLFragmenter(pbus.beatBytes, pbus.blockBytes, holdFirstDeny = true)
+        }
+        Some(pwm_dac)
+      } else {
+        val pwm_dac = LazyModule(new PWMDACTL(params, pbus.beatBytes)(p))
+        pbus.toVariableWidthSlave(Some(portName)) { pwm_dac.node }
+        Some(pwm_dac)
+      }
     }
-    dac_clock_io
-  }
-
-  val pwmdac = p(PWMDACKey).map { params =>
-    val pwmdac = LazyModule(new PWMDAC(params, fbus.beatBytes))
-
-    pbus.toVariableWidthSlave(Some("pwmdac")) { pwmdac.mmio }
-    fbus.fromPort(Some("pwmdac"))() := pwmdac.mem
-    ibus.fromSync := pwmdac.intnode
-
-    val io = InModuleBody {
-      dac_clock.map({ a =>
-        pwmdac.module.clock := a
-      })
-
-      val io = IO(new PWMDACAnalogIO(params)).suggestName("pwmdac")
-      io <> pwmdac.module.io
-      io
-    }
-    io
+    case None => None
   }
 }
 
-class WithPWMDAC(params: PWMDACParams = PWMDACParams()) extends Config((site, here, up) => {
-  case PWMDACKey => Some(params)
-})
-
-/* Note: The following are commented out as they rely on importing chipyard, which no
-         generator can do without having a circular import. They should  be added to
-         files in: <chipyard root>/generators/chipyard/src/main/scala/<file>
-
-         To use, you should then add the following to your config:
-           new pwmdac.WithPWMDAC() ++
-           new chipyard.iobinders.WithPWMDACPunchthrough() ++
-           new chipyard.harness.WithPWMDACTiedOff ++
-
-         Finally add the following to DigitalTop.scala:
-           with pwmdac.CanHavePeripheryPWMDAC
-           with sifive.blocks.devices.timer.HasPeripheryTimer
-*/
-
-/* Place this in IOBinders.scala for use
-import pwmdac.{CanHavePeripheryPWMDAC, PWMDACAnalogIO, PWMDACParams}
-
-class WithPWMDACPunchthrough(params: PWMDACParams = PWMDACParams()) extends OverrideIOBinder({
-  (system: CanHavePeripheryPWMDAC) => {
-    val ports: Seq[PWMDACAnalogIO] = system.pwmdac.map({ a =>
-      val analog = IO(new PWMDACAnalogIO(params)).suggestName("pwmdac")
-      analog <> a
-      analog
-    }).toSeq
-    (ports, Nil)
+trait CanHavePeripheryPWMDACModuleImp extends LazyModuleImp {
+  val outer: CanHavePeripheryPWMDAC
+  val pwm_dac_busy = outer.pwm_dac match {
+    case Some(pwm_dac) => {
+      val busy = IO(Output(Bool()))
+      busy := pwm_dac.module.io.pwm_dac_busy
+      Some(busy)
+    }
+    case None => None
   }
-})
-*/
+}
 
-/* Note: Place this in HarnessBinders.scala for use
-import pwmdac.{CanHavePeripheryPWMDAC, PWMDACAnalogIO}
 
-class WithPWMDACTiedOff extends OverrideHarnessBinder({
-  (system: CanHavePeripheryPWMDAC, th: HasHarnessSignalReferences, ports: Seq[PWMDACAnalogIO]) => {
-    ports.map { p => {
-      p.data.rx.i.data := 0.U
-      p.data.rx.q.data := 0.U
-    }}
-  }
+class WithPWMDAC(useAXI4: Boolean = false, useBlackBox: Boolean = false) extends Config((site, here, up) => {
+  case PWMDACKey => Some(PWMDACParams(useAXI4 = useAXI4, useBlackBox = useBlackBox))
 })
- */
