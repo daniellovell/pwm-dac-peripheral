@@ -1,11 +1,11 @@
 package pwmdac
 
 import chisel3._
+import chisel3.experimental._
 import chisel3.util._
-import chisel3.experimental.{IntParam, BaseModule}
 import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.subsystem.BaseSubsystem
-import freechips.rocketchip.config.{Parameters, Field, Config}
+import freechips.rocketchip.config.{Config, Field, Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper.{HasRegMap, RegField}
 import freechips.rocketchip.tilelink._
@@ -13,7 +13,8 @@ import freechips.rocketchip.util.UIntIsOneOf
 
 case class PWMDACParams(
   address: BigInt = 0x1000,
-  width: Int = 32)
+  width: Int = 32,
+  useAXI4: Boolean = false)
 
 case object PWMDACKey extends Field[Option[PWMDACParams]](None)
 
@@ -27,11 +28,25 @@ class PWMDACTL(params: PWMDACParams, beatBytes: Int)(implicit p: Parameters)
     beatBytes = beatBytes)(
       new TLRegBundle(params, _) with PWMDACTopIO)(
       new TLRegModule(params, _, _) with PWMDACModule)
+      
+class PWMDACAXI4(params: PWMDACParams, beatBytes: Int)(implicit p: Parameters)
+  extends AXI4RegisterRouter(
+    params.address,
+    beatBytes=beatBytes)(
+      new AXI4RegBundle(params, _) with PWMDACTopIO)(
+      new AXI4RegModule(params, _, _) with PWMDACModule)
 
-// IO bundle to define 
+
+// Top-level IO bundle, including both digital and analog IO
 class PWMDACIO(val w: Int) extends Bundle {
-  val clock = Input(Clock())
-  val reset = Input(Bool())
+  val digital = new PWMDACDigitalIO(w)
+  val analog = new PWMDACAnalogIO()
+}
+
+// Digital IO bundle
+class PWMDACDigitalIO(val w: Int) extends Bundle {
+  //val clock = Input(Clock())
+  //val reset = Input(Bool())
   val sample = Input(UInt(w.W))
   val input_ready = Output(Bool())
   val input_valid = Input(Bool())
@@ -39,19 +54,21 @@ class PWMDACIO(val w: Int) extends Bundle {
 }
 
 // Analog IO bundle
-class PWMDACAnalogIO(val w: Int) extends Bundle {
+class PWMDACAnalogIO() extends Bundle {
   val dac_out = Output(Bool())
 }
 
-// Trait for modules that have PWMDAC IO
 trait HasPWMDACIO extends BaseModule {
   val w: Int
   val io = IO(new PWMDACIO(w))
 }
 
-class PWMDACMMIOModule(val w: Int) extends Module
-  with HasPWMDACIO 
+
+class PWMDACImp(val w: Int) extends Module
+  with HasPWMDACIO
 {
+    val dig_io: PWMDACDigitalIO = io.digital
+    val ana_io: PWMDACAnalogIO = io.analog
     // States for the state machine
     val s_idle :: s_run :: Nil = Enum(2)
     val state = RegInit(s_idle)
@@ -60,23 +77,28 @@ class PWMDACMMIOModule(val w: Int) extends Module
     // Counter max as (2^w)-1
     val counter_max = (1 << w) - 1
 
-    io.input_ready := (state === s_idle)
-    when (state === s_idle && io.input_valid) {
+    dig_io.input_ready := (state === s_idle)
+    when (state === s_idle && dig_io.input_valid) {
       state := s_run
-    }.elsewhen (state === s_run && counter === w.U) {
+    }.elsewhen (state === s_run && counter >= counter_max.U) {
       state := s_idle
     }
 
-
+    when (state === s_idle) {
+      counter := 0.U
+    }.elsewhen (state === s_run) {
+      counter := counter + 1.U
+    }
+    // PWM output
+    ana_io.dac_out := (counter >= counter_max.U)
 }
 
 trait PWMDACModule extends HasRegMap {
+  val params: PWMDACParams
   val io: PWMDACTopIO
 
-  implicit val p: Parameters
-  def params: PWMDACParams
-  val clock: Clock
-  val reset: Reset
+  //val clock: Clock
+  //val reset: Reset
 
 
   // How many clock cycles in a PWM cycle?
@@ -84,20 +106,20 @@ trait PWMDACModule extends HasRegMap {
   val dac_out = Wire(Bool())
   val status = Wire(UInt(2.W))
 
-  val impl = Module(new PWMDACMMIOModule(params.width))
+  lazy val impl = new PWMDACImp(params.width)
 
-  impl.io.clock := clock
-  impl.io.reset := reset.asBool
+  //impl.io.digital.clock := clock
+  //impl.io.digital.reset := reset.asBool
 
-  impl.io.input_valid := sample.valid
-  sample.ready := impl.io.input_ready
+  impl.io.digital.input_valid := sample.valid
+  sample.ready := impl.io.digital.input_ready
 
-  status := Cat(impl.io.input_ready, impl.io.busy)
-  io.dac_busy := impl.io.busy
+  status := Cat(impl.io.digital.input_ready, impl.io.digital.busy)
+  io.dac_busy := impl.io.digital.busy
 
   regmap(
     0x00 -> Seq(
       RegField.r(2, status)),               // a read-only register capturing current status
     0x04 -> Seq(
-      RegField.w(params.width, sample))),   // write-only, sample.valid is set on write
+      RegField.w(params.width, sample)))   // write-only, sample.valid is set on write
 }
