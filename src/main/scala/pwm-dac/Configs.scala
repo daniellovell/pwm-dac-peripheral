@@ -1,13 +1,15 @@
 package pwmdac
 
 import chisel3._
-import chisel3.{withClock => withNewClock}
 import chisel3.util._
-import chisel3.experimental._
-import chisel3.experimental.{withClock => withExperimentalClock}
-import freechips.rocketchip.config.Config
-import freechips.rocketchip.diplomacy.{InModuleBody, LazyModule}
+import chisel3.experimental.{IntParam, BaseModule}
+import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.subsystem.BaseSubsystem
+import freechips.rocketchip.config.{Parameters, Field, Config}
+import freechips.rocketchip.diplomacy._
+import freechips.rocketchip.regmapper.{HasRegMap, RegField}
+import freechips.rocketchip.tilelink._
+import freechips.rocketchip.util.UIntIsOneOf
 
 trait CanHavePeripheryPWMDAC { this: BaseSubsystem =>
   private val portName = "pwm_dac"
