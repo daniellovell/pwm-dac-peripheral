@@ -45,8 +45,8 @@ class PWMDACIO(val w: Int) extends Bundle {
 
 // Digital IO bundle
 class PWMDACDigitalIO(val w: Int) extends Bundle {
-  //val clock = Input(Clock())
-  //val reset = Input(Bool())
+  val clock = Input(Clock())
+  val reset = Input(Bool())
   val sample = Input(UInt(w.W))
   val input_ready = Output(Bool())
   val input_valid = Input(Bool())
@@ -97,8 +97,8 @@ trait PWMDACModule extends HasRegMap {
   val params: PWMDACParams
   val io: PWMDACTopIO
 
-  //val clock: Clock
-  //val reset: Reset
+  val clock: Clock
+  val reset: Reset
 
 
   // How many clock cycles in a PWM cycle?
@@ -108,8 +108,8 @@ trait PWMDACModule extends HasRegMap {
 
   lazy val impl = new PWMDACImp(params.width)
 
-  //impl.io.digital.clock := clock
-  //impl.io.digital.reset := reset.asBool
+  impl.io.digital.clock := clock
+  impl.io.digital.reset := reset.asBool
 
   impl.io.digital.input_valid := sample.valid
   sample.ready := impl.io.digital.input_ready
